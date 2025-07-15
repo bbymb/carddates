@@ -22,3 +22,128 @@
   },
   "proxy": "http://localhost:5000"
 }
+import React, { useEffect, useState } from 'react';
+import axios from 'axios';
+
+const api = axios.create({
+  baseURL: '/api',
+  headers: { 'Content-Type': 'application/json' }
+});
+
+function App() {
+  const [token, setToken] = useState(localStorage.getItem('token') || '');
+  const [cards, setCards] = useState([]);
+  const [form, setForm] = useState({ cardName: '', expiryDate: '', notes: '' });
+  const [auth, setAuth] = useState({ email: '', password: '' });
+  const [view, setView] = useState(token ? 'dashboard' : 'login');
+  const [error, setError] = useState('');
+
+  useEffect(() => {
+    if (token) {
+      api.get('/cards', { headers: { Authorization: `Bearer ${token}` } })
+        .then(res => setCards(res.data))
+        .catch(() => setError('Failed to fetch cards.'));
+    }
+  }, [token]);
+
+  const handleAuth = async (type) => {
+    setError('');
+    try {
+      const res = await api.post(`/auth/${type}`, auth);
+      if (type === 'login') {
+        setToken(res.data.token);
+        localStorage.setItem('token', res.data.token);
+        setView('dashboard');
+      } else {
+        alert('Registered! Please login.');
+        setView('login');
+      }
+    } catch (e) {
+      setError(e.response?.data?.error || 'Auth failed');
+    }
+  };
+
+  const handleAdd = async () => {
+    setError('');
+    if (!form.cardName || !form.expiryDate) {
+      setError('Card name and expiry date are required.');
+      return;
+    }
+    try {
+      const res = await api.post('/cards', form, { headers: { Authorization: `Bearer ${token}` } });
+      setCards([...cards, res.data]);
+      setForm({ cardName: '', expiryDate: '', notes: '' });
+    } catch (e) {
+      setError(e.response?.data?.error || 'Add card failed');
+    }
+  };
+
+  const handleDelete = async (id) => {
+    setError('');
+    try {
+      await api.delete(`/cards/${id}`, { headers: { Authorization: `Bearer ${token}` } });
+      setCards(cards.filter(card => card._id !== id));
+    } catch (e) {
+      setError('Delete failed');
+    }
+  };
+
+  if (view === 'login' || view === 'register') return (
+    <div>
+      <h2>{view === 'login' ? 'Login' : 'Register'}</h2>
+      <input placeholder="Email" value={auth.email} onChange={e => setAuth({ ...auth, email: e.target.value })} /><br />
+      <input placeholder="Password" type="password" value={auth.password} onChange={e => setAuth({ ...auth, password: e.target.value })} /><br />
+      <button onClick={() => handleAuth(view)}>{view === 'login' ? 'Login' : 'Register'}</button>
+      <br />
+      <button onClick={() => { setView(view === 'login' ? 'register' : 'login'); setError(''); }}>
+        {view === 'login' ? 'Go to Register' : 'Go to Login'}
+      </button>
+      {error && <div style={{ color: 'red' }}>{error}</div>}
+    </div>
+  );
+
+  return (
+    <div>
+      <h2>My Cards</h2>
+      <button onClick={() => { setToken(''); localStorage.removeItem('token'); setView('login'); }}>Logout</button>
+      <ul>
+        {cards.map(card => (
+          <li key={card._id}>
+            <b>{card.cardName}</b> — expires {new Date(card.expiryDate).toLocaleDateString()}
+            <button onClick={() => handleDelete(card._id)}>Delete</button>
+            <span style={{
+              color: new Date(card.expiryDate) - Date.now() < 30 * 24 * 60 * 60 * 1000 ? 'red' : 'black',
+              marginLeft: 10
+            }}>
+              {new Date(card.expiryDate) - Date.now() < 30 * 24 * 60 * 60 * 1000 ? 'Expiring Soon!' : ''}
+            </span>
+            {card.notes && <div style={{ fontSize: '0.9em', color: '#555' }}>{card.notes}</div>}
+          </li>
+        ))}
+      </ul>
+      <h3>Add Card</h3>
+      <input placeholder="Card Name" value={form.cardName} onChange={e => setForm({ ...form, cardName: e.target.value })} /><br />
+      <input type="date" value={form.expiryDate} onChange={e => setForm({ ...form, expiryDate: e.target.value })} /><br />
+      <input placeholder="Notes" value={form.notes} onChange={e => setForm({ ...form, notes: e.target.value })} /><br />
+      <button onClick={handleAdd}>Add</button>
+      {error && <div style={{ color: 'red' }}>{error}</div>}
+    </div>
+  );
+}
+
+export default App;
+import React from 'react';
+import ReactDOM from 'react-dom/client';
+import App from './App';
+
+ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>CardDates</title>
+  </head>
+  <body>
+    <div id="root"></div>
+  </body>
+</html>
