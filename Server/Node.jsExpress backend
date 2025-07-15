@@ -7,3 +7,155 @@
     "server"
   ]
 }
+{
+  "name": "carddates-server",
+  "version": "1.0.0",
+  "main": "index.js",
+  "type": "module",
+  "scripts": {
+    "start": "node index.js",
+    "dev": "nodemon index.js"
+  },
+  "dependencies": {
+    "bcryptjs": "^2.4.3",
+    "cors": "^2.8.5",
+    "dotenv": "^16.4.5",
+    "express": "^4.19.2",
+    "jsonwebtoken": "^9.0.2",
+    "mongoose": "^8.3.5"
+  },
+  "devDependencies": {
+    "nodemon": "^3.1.0"
+  }
+}
+import express from 'express';
+import mongoose from 'mongoose';
+import cors from 'cors';
+import dotenv from 'dotenv';
+import authRoutes from './routes/auth.js';
+import cardRoutes from './routes/card.js';
+
+dotenv.config();
+
+const app = express();
+app.use(cors());
+app.use(express.json());
+
+app.use('/api/auth', authRoutes);
+app.use('/api/cards', cardRoutes);
+
+const PORT = process.env.PORT || 5000;
+
+mongoose.connect(process.env.MONGO_URI, { useNewUrlParser: true, useUnifiedTopology: true })
+  .then(() => app.listen(PORT, () => console.log(`Server running on port ${PORT}`)))
+  .catch(err => console.error(err));
+import mongoose from 'mongoose';
+
+const userSchema = new mongoose.Schema({
+  email: { type: String, required: true, unique: true },
+  password: { type: String, required: true }
+});
+
+export default mongoose.model('User', userSchema);
+import mongoose from 'mongoose';
+
+const cardSchema = new mongoose.Schema({
+  userId: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
+  cardName: { type: String, required: true },
+  expiryDate: { type: Date, required: true },
+  notes: String
+});
+
+export default mongoose.model('Card', cardSchema);
+import express from 'express';
+import bcrypt from 'bcryptjs';
+import jwt from 'jsonwebtoken';
+import User from '../models/User.js';
+
+const router = express.Router();
+
+router.post('/register', async (req, res) => {
+  try {
+    const { email, password } = req.body;
+    const exists = await User.findOne({ email });
+    if (exists) return res.status(400).json({ error: 'Email already in use' });
+    const hash = await bcrypt.hash(password, 10);
+    const user = new User({ email, password: hash });
+    await user.save();
+    res.status(201).json({ message: 'Registered' });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+router.post('/login', async (req, res) => {
+  try {
+    const { email, password } = req.body;
+    const user = await User.findOne({ email });
+    if (!user) return res.status(400).json({ error: 'Invalid credentials' });
+    const match = await bcrypt.compare(password, user.password);
+    if (!match) return res.status(400).json({ error: 'Invalid credentials' });
+    const token = jwt.sign({ id: user._id }, process.env.JWT_SECRET, { expiresIn: '7d' });
+    res.json({ token });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+export default router;
+import jwt from 'jsonwebtoken';
+
+export default function (req, res, next) {
+  const token = req.header('Authorization')?.replace('Bearer ', '');
+  if (!token) return res.status(401).json({ error: 'No token' });
+  try {
+    const decoded = jwt.verify(token, process.env.JWT_SECRET);
+    req.user = decoded;
+    next();
+  } catch {
+    res.status(401).json({ error: 'Invalid token' });
+  }
+}
+import express from 'express';
+import Card from '../models/Card.js';
+import auth from '../middleware/auth.js';
+
+const router = express.Router();
+
+// Get user's cards
+router.get('/', auth, async (req, res) => {
+  const cards = await Card.find({ userId: req.user.id }).sort({ expiryDate: 1 });
+  res.json(cards);
+});
+
+// Add new card
+router.post('/', auth, async (req, res) => {
+  const { cardName, expiryDate, notes } = req.body;
+  if (!cardName || !expiryDate) {
+    return res.status(400).json({ error: 'Card name and expiry date are required.' });
+  }
+  const card = new Card({ userId: req.user.id, cardName, expiryDate, notes });
+  await card.save();
+  res.status(201).json(card);
+});
+
+// Update a card
+router.put('/:id', auth, async (req, res) => {
+  const card = await Card.findOneAndUpdate(
+    { _id: req.params.id, userId: req.user.id },
+    req.body, { new: true }
+  );
+  if (!card) return res.status(404).json({ error: 'Not found' });
+  res.json(card);
+});
+
+// Delete a card
+router.delete('/:id', auth, async (req, res) => {
+  const card = await Card.findOneAndDelete({ _id: req.params.id, userId: req.user.id });
+  if (!card) return res.status(404).json({ error: 'Not found' });
+  res.json({ message: 'Deleted' });
+});
+
+export default router;
+MONGO_URI=mongodb://localhost:27017/carddates
+JWT_SECRET=your_jwt_secret_here
